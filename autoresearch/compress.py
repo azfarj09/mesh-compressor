@@ -362,7 +362,7 @@ class NGramModel:
         # require more counts before trusting high-order contexts
         is_sparse_script = ctx_script_early in ("CJK", "Hiragana", "Katakana", "Hangul")
         confidence_denom = (
-            (lambda n: n + 8.0) if is_sparse_script else (lambda n: n + 3.0)
+            (lambda n: n + 8.0) if is_sparse_script else (lambda n: n + 1.5)
         )
 
         for n in range(self.order, -1, -1):
@@ -610,28 +610,13 @@ def train_model(messages):
     return model
 
 
-def compress(text, model):
+def _compress_ac(text, model):
     """
-    Compress text using the trained model.
-    Returns: bytes
-
-    Format v2: [2 bytes: text length as uint16 BE]
-               [1 byte: flags (bit 0 = has inline escapes)]
-               [AC bitstream]
-
-    Unknown characters are encoded inline in the AC stream:
-    ESC symbol + UTF-8 bytes (each byte encoded at uniform 1/256 probability).
-    This avoids the expensive per-char header listing.
+    Internal: compress text using arithmetic coding.
+    Returns: bytes (3-byte header + AC bitstream)
     """
-    if not text:
-        return b"\x00\x00"
-
-    # Find chars not in training vocab
     extra_chars = set(ch for ch in text if ch not in model._vocab_set)
     has_extras = len(extra_chars) > 0
-
-    # For backward compatibility: if no extras, use flag=0
-    # If extras exist, use flag=1 (inline escape mode)
     flags = 1 if has_extras else 0
 
     encoder = ArithmeticEncoder()
@@ -639,7 +624,6 @@ def compress(text, model):
 
     for ch in text:
         if ch in model._vocab_set:
-            # Normal character — encode using model CDF
             cdf = model.get_cdf(context)
             found = False
             for sym, cum_low, cum_high in cdf:
@@ -652,19 +636,15 @@ def compress(text, model):
                     f"Character '{ch}' (U+{ord(ch):04X}) in vocab but not in CDF"
                 )
         else:
-            # Unknown character — encode as ESC + block-aware codepoint
             cdf = model.get_cdf(context)
             for sym, cum_low, cum_high in cdf:
                 if sym == ESC:
                     encoder.encode_symbol(cum_low, cum_high, CDF_SCALE)
                     break
-
-            # Encode codepoint using block-aware variable-length encoding
             _encode_codepoint(encoder, ord(ch))
 
         context = (context + ch)[-model.order :]
 
-    # Encode EOF
     cdf = model.get_cdf(context)
     for sym, cum_low, cum_high in cdf:
         if sym == EOF:
@@ -672,48 +652,142 @@ def compress(text, model):
             break
 
     ac_bytes = encoder.finish()
+    text_len = len(text)
 
-    # Build header: [uint16 text_len] [uint8 flags]
-    header = struct.pack(">HB", len(text), flags)
-
+    if text_len < 128:
+        # Compact 2-byte header: [0x00] [has_escapes_bit7 | text_len_7bits]
+        header = bytes([0x00, (flags << 7) | text_len])
+    else:
+        # Standard 3-byte header for longer texts: [uint16 text_len BE] [flags]
+        # Note: text_len >= 128 means high byte of uint16 could still be 0x00
+        # (text_len < 256), but byte[1] will have bit 7 set (text_len >= 128)
+        # so it won't be confused with compact format.
+        header = struct.pack(">HB", text_len, flags)
     return header + ac_bytes
+
+
+def compress(text, model):
+    """
+    Compress text using the trained model.
+    Returns: bytes
+
+    Three output formats:
+    1. Empty:       b'\\x00\\x00' (2 bytes)
+    2. Passthrough: raw UTF-8 bytes (zero overhead)
+                    Used when AC output is larger than the raw UTF-8.
+                    Detected on decompress by first byte != 0x00.
+    3. Compressed:  [0x00] [text_len_low_byte] [flags] [AC bitstream]
+                    First byte is always 0x00 (text_len < 256 for Meshtastic).
+
+    Format discrimination on decompress:
+    - data[0] == 0x00 AND len >= 2: check data[0:2] as uint16 BE text_len.
+      If text_len == 0 → empty. Otherwise → compressed format.
+    - data[0] != 0x00: passthrough (raw UTF-8)
+
+    This works because real UTF-8 text never starts with 0x00 (null byte),
+    and Meshtastic text_len < 256 so the high byte is always 0x00.
+    """
+    if not text:
+        return b"\x00\x00"
+
+    utf8_bytes = text.encode("utf-8")
+
+    # Try AC compression
+    ac_result = _compress_ac(text, model)
+
+    # If AC result is larger than raw UTF-8, use passthrough (zero overhead)
+    if len(ac_result) > len(utf8_bytes):
+        return utf8_bytes
+    else:
+        return ac_result
 
 
 def decompress(data, model):
     """
     Decompress bytes back to text using the trained model.
 
-    Supports two formats:
-    - v1 (flags >= 2 or old format): [2B len] [1B n_extra] [extra chars] [AC stream]
-    - v2 (flags 0 or 1): [2B len] [1B flags] [AC stream with inline escapes]
+    Supports formats:
+    - Passthrough: data[0] != 0x00 → raw UTF-8, just decode directly
+    - Empty:       data == b'\\x00\\x00' → empty string
+    - Compressed:  data[0] == 0x00 → standard format with header
+      - v1 (flags >= 2): old-style header with extra chars listed
+      - v2 (flags 0 or 1): inline escape mode
     """
-    if len(data) < 3:
-        raise ValueError("Data too short")
+    if not data:
+        raise ValueError("Empty data")
 
-    text_len = struct.unpack(">H", data[:2])[0]
-    if text_len == 0:
+    # Passthrough detection: first byte is never 0x00 in valid UTF-8 text
+    if data[0] != 0x00:
+        return data.decode("utf-8")
+
+    # Compressed format: first byte is 0x00
+    if len(data) < 2:
+        raise ValueError("Data too short for compressed format")
+
+    if data[1] == 0x00:
+        # Empty string: [0x00, 0x00]
         return ""
 
-    flags_or_nextra = data[2]
-
-    # Detect format: v2 uses flags 0 or 1, v1 has n_extra >= 0
-    # If flags_or_nextra <= 1, it's v2 format (flags)
-    # If flags_or_nextra > 1, it's v1 format (n_extra chars listed in header)
-    # Edge case: v1 with 0 or 1 extra chars is indistinguishable from v2
-    # Solution: v2 with flags=0 means "no extras, no escape" = same behavior as v1 with 0 extras
-    # v2 with flags=1 means "has inline escapes"
-    # v1 with n_extra=1 means "one extra char listed in header"
-    # We detect by checking if the next byte looks like a UTF-8 char length (1-4)
-
-    if flags_or_nextra > 1:
-        # v1 format: old-style header with extra chars listed
-        return _decompress_v1(data, model, text_len, flags_or_nextra)
-    elif flags_or_nextra == 1:
-        # v2 format: inline escape mode
-        return _decompress_v2(data, model, text_len, has_escapes=True)
+    # Check if compact or standard header
+    byte1 = data[1]
+    if byte1 & 0x80 == 0:
+        # Compact 2-byte header: [0x00] [0 | text_len_7bits] — no escapes
+        text_len = byte1 & 0x7F
+        has_escapes = False
+        ac_data = data[2:]
+    elif byte1 != 0xFF and byte1 >= 0x80:
+        # Could be compact header with escapes OR standard header
+        # Compact: [0x00] [1 | text_len_7bits] — has escapes
+        # Standard: [0x00] [text_len_low] [flags] — text_len >= 128
+        # Disambiguate: in compact mode, text_len = byte1 & 0x7F (1-127)
+        # In standard mode, this would be uint16 BE = byte1 (128-254 = len)
+        # Standard header text_len >= 128 means byte[0]=0, byte[1]>=128
+        # We need to distinguish: did the compressor use compact or standard?
+        # Decision: if text_len < 128, always compact. If >= 128, always standard.
+        # So if byte1 & 0x7F > 0, this is compact with escapes.
+        # If byte1 & 0x7F == 0 (byte1 == 0x80), this would be compact text_len=0,
+        # but text_len=0 is handled above. So byte1 in [0x81..0xFF) is compact.
+        compact_text_len = byte1 & 0x7F
+        if compact_text_len > 0 and len(data) >= 2:
+            # Compact header with escapes
+            text_len = compact_text_len
+            has_escapes = True
+            ac_data = data[2:]
+        else:
+            # Standard 3-byte header (text_len >= 128)
+            if len(data) < 3:
+                raise ValueError("Data too short for standard header")
+            text_len = struct.unpack(">H", data[:2])[0]
+            flags_or_nextra = data[2]
+            if flags_or_nextra > 1:
+                return _decompress_v1(data, model, text_len, flags_or_nextra)
+            elif flags_or_nextra == 1:
+                return _decompress_v2(data, model, text_len, has_escapes=True)
+            else:
+                return _decompress_v2(data, model, text_len, has_escapes=False)
     else:
-        # flags=0: no extras, same for both v1 and v2
-        return _decompress_v2(data, model, text_len, has_escapes=False)
+        # byte1 == 0xFF shouldn't happen in normal use
+        raise ValueError(f"Unexpected byte[1] value: 0x{byte1:02X}")
+
+    if not ac_data:
+        raise ValueError("No AC data after header")
+
+    decoder = ArithmeticDecoder(ac_data)
+    context = BOS * model.order
+    result = []
+
+    for _ in range(text_len + 1):
+        cdf = model.get_cdf(context)
+        ch = decoder.decode_symbol(cdf)
+        if ch == EOF:
+            break
+        elif ch == ESC and has_escapes:
+            cp = _decode_codepoint(decoder)
+            ch = chr(cp)
+        result.append(ch)
+        context = (context + ch)[-model.order :]
+
+    return "".join(result)
 
 
 def _decompress_v1(data, model, text_len, n_extra):

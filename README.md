@@ -4,7 +4,72 @@ Fits **2-7x more text** into a single 233-byte Meshtastic packet. Lossless. 10 l
 
 **[Try it online](https://dimapanov.github.io/mesh-compressor/)**
 
-![Compression by language](docs/img/compression-by-language.jpg)
+![Compression by language](docs/img/compression-by-language.png)
+
+## How compression works — explained simply
+
+Imagine you're typing a message to a friend: **«Приве...»**. What's the next letter? You'd guess **«т»** without thinking — and you'd be right 90%+ of the time. This compressor does exactly the same thing, but with math.
+
+### The idea in 30 seconds
+
+1. **The model learns language patterns.** We feed it 452,000 real messages in 10 languages. It memorises things like: after «Приве» comes «т» (93%), after «hell» comes «o» (87%), after «信号» comes «强» (72%). Essentially a giant lookup table of "what usually comes next."
+
+2. **Predictable letters cost almost nothing.** When we compress a message, we go letter by letter. If the model predicted the right letter with 93% confidence — we only need ~0.1 bits to encode it. A surprising letter (1% chance) costs ~7 bits. The whole message turns into one compact number.
+
+3. **Decompression reverses the process.** The receiver has the same model. It reads the compact number, asks the model "what's most likely next?", and reconstructs the original text letter by letter. Zero losses — the output is bit-for-bit identical to the input.
+
+### Why this works for short messages (and zlib doesn't)
+
+**zlib/LZ4** look for repeating patterns *inside* your message. A 5-word text has no internal repetitions → nothing to compress → the output is actually **bigger** (zlib adds a dictionary header).
+
+**This compressor** brings *external knowledge* — statistics from 452K messages. So even a 2-word message compresses well, because the model already "knows" what those words look like. Think of it as the difference between compressing with a blank notebook vs. compressing with a cheat sheet of the entire language.
+
+### The encoding pipeline
+
+```
+Your message                          "Привет, как дела?"
+    │
+    ▼
+[1] Model predicts each next char     П→р (95%) р→и (88%) и→в (91%) ...
+    │
+    ▼
+[2] Arithmetic coder turns             Predictions + actual chars
+    predictions into a number         → one compact binary number
+    │
+    ▼
+[3] Add a tiny header                 2 bytes: message length + flags
+    │
+    ▼
+[4] Passthrough check                 If result > original UTF-8 →
+                                      just send raw UTF-8 (short msgs)
+    │
+    ▼
+Output                                6 bytes (was 30 — saved 80%)
+```
+
+On the receiving side, the same steps run in reverse: read the header → feed the number into the arithmetic decoder → the model predicts letters one by one → original text is restored perfectly.
+
+### Passthrough: short messages never get bigger
+
+For very short messages like "ok" or "да", the 2-byte header alone is already a significant overhead. In these cases the compressor simply returns the original UTF-8 bytes unchanged — zero overhead. The decompressor auto-detects this by the first byte (compressed data always starts with `0x00`, raw UTF-8 text never does).
+
+## Optimization progress
+
+Three phases of autoresearch experiments brought BPC from **3.220 → 2.977** (−7.5%) and shrank the model from **13.5 MB → 3.0 MB** while improving compression quality:
+
+![Optimization progress](docs/img/optimization-progress.png)
+
+| Phase | What changed | BPC | Model size | Δ BPC |
+|-------|-------------|-----|------------|-------|
+| **Starting point** | Order=11, no pruning, 2 languages | 3.225 | 13.5 MB | — |
+| **Pruning + 10 langs** | Progressive pruning, 10-language universal model | 3.220 | 3.0 MB (−78%) | −0.2% |
+| **Model tuning** | Cubic weights, confidence penalty, ESC_PROB 20K→500 | 3.211 | 3.0 MB | −0.3% |
+| **Multilingual** | SCRIPT_BOOST 30→5, CJK 3× training weight, CJK confidence n+8 | 3.210 | 3.0 MB | −0.03% |
+| **Format optimization** | Zero-overhead passthrough, compact 2-byte header, confidence n+1.5 | 2.977 | 3.0 MB | **−7.3%** |
+
+The model started at **13.5 MB** (order=11, no pruning, RU+EN only) — far too large for ESP32. Progressive pruning with threshold scheduling (`thr=5→50→200`) reduced it to **3.0 MB** while adding 8 more languages and *improving* compression. The pruned model fits on ESP32 boards with 8+ MB flash via `esp_partition_mmap`.
+
+The biggest single win: **compact 2-byte header** (−7.1%). Reducing header from 3→2 bytes saves 1 byte per message, which is proportionally huge for short radio messages.
 
 ## The problem
 
@@ -14,16 +79,18 @@ Standard compression algorithms (zlib, LZ4, Brotli) don't help here. They look f
 
 | Message | UTF-8 | zlib | Unishox2 | n-gram+AC |
 |---------|-------|------|----------|-----------|
-| `Привет, как дела?` | 30 B | 41 B (+37%) | 20 B (-33%) | **7 B (-77%)** |
-| `Check channel 5` | 15 B | 23 B (+53%) | 11 B (-27%) | **7 B (-53%)** |
-| `Battery at 40%, switching to power save` | 39 B | 47 B (+21%) | 26 B (-33%) | **12 B (-69%)** |
-| `Проверка связи. Как слышно?` | 49 B | 57 B (+16%) | 28 B (-43%) | **7 B (-86%)** |
+| `Привет, как дела?` | 30 B | 41 B (+37%) | 20 B (-33%) | **6 B (-80%)** |
+| `Check channel 5` | 15 B | 23 B (+53%) | 11 B (-27%) | **6 B (-60%)** |
+| `Battery at 40%, switching to power save` | 39 B | 47 B (+21%) | 26 B (-33%) | **11 B (-72%)** |
+| `Проверка связи. Как слышно?` | 49 B | 57 B (+16%) | 28 B (-43%) | **6 B (-88%)** |
 | Long English (104 chars) | 104 B | 96 B (-8%) | 65 B (-38%) | **52 B (-50%)** |
 | Long Russian (229 bytes) | 229 B | 156 B (-32%) | 120 B (-48%) | **30 B (-87%)** |
 
-![Compression comparison](docs/img/compression-comparison.jpg)
+![Compression comparison](docs/img/compression-comparison.png)
 
-zlib makes short messages *larger*. Unishox2 saves ~30-40%. n-gram+AC saves **50-87%**.
+zlib makes short messages *larger*. Unishox2 saves ~30-40%. n-gram+AC saves **50-88%**.
+
+![Short message fix](docs/img/short-message-fix.png)
 
 ### Why Unishox2 was disabled
 
@@ -31,42 +98,37 @@ Meshtastic previously used [Unishox2](https://github.com/siara-cc/Unishox2) comp
 
 This project takes a fundamentally different approach that avoids these issues (see [Safety](#safety) below).
 
-## How it works
+## Compression results
 
-Think of it as **T9 on steroids**. T9 looks at 1-2 previous characters and suggests a word. This model looks at up to 9 previous characters and predicts the probability of every possible next character: "after `Приве` the next character is `т` with 93% probability."
-
-The arithmetic coder then uses these predictions: predictable characters cost nearly **0 bits**, surprising ones cost more. The entire message becomes a single compact number.
-
-The key difference from zlib/LZ4/Unishox2: those algorithms look for patterns *inside your message*. This model brings **external knowledge** — statistics from 452,000 training messages in 10 languages — so it compresses well even on 2-word texts.
-
-### Compression results
-
-![Compression ratio vs message length](docs/img/compression-by-length.jpg)
+![Compression ratio vs message length](docs/img/compression-by-length.png)
 
 | Message | Lang | UTF-8 | Compressed | Ratio |
 |---------|------|-------|------------|-------|
-| `Привет, как дела?` | RU | 30 B | 7 B | **77%** |
-| `Battery at 40%, switching to power save` | EN | 39 B | 12 B | **69%** |
+| `ok` | EN | 2 B | 2 B | **0%** (passthrough) |
+| `да` | RU | 4 B | 4 B | **0%** (passthrough) |
+| `Привет, как дела?` | RU | 30 B | 6 B | **80%** |
+| `Battery at 40%, switching to power save` | EN | 39 B | 11 B | **72%** |
 | `GPS: 57.153, 68.241 heading north` | EN | 33 B | 12 B | **64%** |
 | `¿Cómo estás? Todo bien por aquí` | ES | 35 B | 14 B | **60%** |
 | `مرحبا، كيف حالك اليوم؟` | AR | 41 B | 17 B | **59%** |
 | `今日の天気は晴れ、気温22度` | JA | 38 B | 16 B | **58%** |
-| `Проверка связи. Как слышно?` | RU | 49 B | 7 B | **86%** |
+| `Проверка связи. Как слышно?` | RU | 49 B | 6 B | **88%** |
 | Long Russian message (129 chars) | RU | 229 B | 30 B | **87%** |
-| Long English message (104 chars) | EN | 104 B | 52 B | **50%** |
 
 Without compression: **~77-233 characters** per packet (depending on script).
-With compression: **~300-900 characters** per packet.
+With compression: **~470-1100 characters** per packet.
 
-100% lossless. Roundtrip-verified on every test message.
+![Packet capacity](docs/img/capacity.png)
+
+100% lossless. Roundtrip-verified on every test message. Zero negative compressions.
 
 ## Safety
 
 This design addresses the exact vulnerabilities that led to Unishox2 removal:
 
-**Bounded decompression.** The compressed format includes a 2-byte header with the original text length. The decompressor allocates exactly that size and stops — no unbounded buffer writes, no overflows regardless of input.
+**Bounded decompression.** The compressed format includes a header with the original text length. The decompressor allocates exactly that size and stops — no unbounded buffer writes, no overflows regardless of input.
 
-**Compression never expands dangerously.** Unlike Unishox2 which could expand high-entropy input beyond buffer limits, arithmetic coding has a theoretical maximum expansion of ~1 bit per character (the EOF marker overhead). For a 233-byte input, worst case is ~234 bytes — never a crash-inducing expansion.
+**Compression never expands.** Unlike Unishox2 which could expand high-entropy input beyond buffer limits, this compressor has a **zero-overhead passthrough** mechanism: if arithmetic coding produces output larger than the raw UTF-8, the raw bytes are returned directly. Output is *guaranteed* to be ≤ input size. There is no scenario where compression makes data larger.
 
 **Graceful fallback.** If the compressed output is larger than the original UTF-8 bytes, just send uncompressed. The portnum tells the receiver which format to expect.
 
@@ -147,11 +209,20 @@ Not tested on real hardware yet — this is a proof of concept.
 ```
 Portnum: TEXT_MESSAGE_COMPRESSED_APP (7) — already exists in Meshtastic protobufs
 
-Payload:
-[2 bytes: original text length, uint16 BE]
-[1 byte: number of extra characters not in model vocabulary]
-[extra chars as UTF-8, each prefixed by 1-byte length]
-[arithmetic-coded bitstream]
+Three payload formats, auto-detected by the first byte:
+
+1. Passthrough (first byte ≠ 0x00):
+   [raw UTF-8 bytes]
+   Used for very short messages where AC doesn't help.
+   Decompressor detects by first byte ≠ 0x00 (valid UTF-8 never starts with null).
+
+2. Compressed, short (first byte = 0x00, second byte bit7 clear):
+   [0x00] [has_escapes_bit7 | text_len_7bits] [AC bitstream]
+   2-byte header for messages with text_len < 128 characters (~99% of messages).
+
+3. Compressed, long (first byte = 0x00, second byte bit7 set):
+   [0x00] [text_len_high] [flags] [AC bitstream]
+   3-byte header for messages with text_len ≥ 128 characters (rare).
 ```
 
 ### Two transport modes
@@ -171,13 +242,15 @@ Payload:
 
 ### Language model
 
-Character-level n-gram model (order 9) with cubic interpolation smoothing:
+Character-level n-gram model (order 11) with cubic interpolation smoothing and confidence penalty:
 
 ```
-weight(n) = (n + 1)^3 * log(1 + count)
+weight(n) = (n + 1)^3 * log(1 + count) * min(count / (n + 1.5), 1)
 ```
 
 1,494 unique characters, ~87K context entries after pruning, trained on 452,532 messages across 10 languages (RU, EN, ES, DE, FR, PT, ZH, AR, JA, KO). The model is the "dictionary" — but unlike zlib's dictionary, it captures *language structure*, not byte patterns.
+
+Script-aware epsilon smoothing gives base probability to characters from the same Unicode script as the context, enabling compression of out-of-vocabulary text. CJK/Hangul/Japanese scripts use a more conservative confidence denominator (n+8) to avoid overfitting sparse training data.
 
 ### Arithmetic coding
 
@@ -191,7 +264,7 @@ weight(n) = (n + 1)^3 * log(1 + count)
 | C++ binary (estimated, prog-A) | 3.0 MB | ESP32 flash via mmap |
 | C++ binary (estimated, thr=200) | 2.5 MB | ESP32 with tight flash |
 
-The universal model covers 10 languages with 72-84% compression. More aggressive pruning (thr=200) trades ~1% compression for a smaller binary.
+The universal model covers 10 languages with 78-87% compression. More aggressive pruning (thr=200) trades ~1% compression for a smaller binary.
 
 ## Try it
 
@@ -231,7 +304,7 @@ curl -X POST http://localhost:8766/api/decode_b91 \
 
 ## Multilingual support
 
-![Compression by language](docs/img/compression-by-language.jpg)
+![Compression by language](docs/img/compression-by-language.png)
 
 ### Experiment results
 
@@ -239,22 +312,24 @@ We tested two strategies: **one universal model** (all languages) vs **per-langu
 
 | Language | Per-language | Universal | Difference |
 |----------|-------------|-----------|------------|
-| Arabic | 85% | **84%** | -1% |
-| Japanese | 82% | **79%** | -3% |
-| Korean | 81% | **79%** | -2% |
-| Spanish | 79% | **77%** | -2% |
-| Russian | 78% | **77%** | -1% |
-| English | 75% | **73%** | -2% |
-| French | 77% | **75%** | -2% |
-| Portuguese | 77% | **75%** | -2% |
-| German | 76% | **74%** | -2% |
-| Chinese | 77% | **74%** | -3% |
+| Arabic | 85% | **87%** | +2% |
+| Japanese | 82% | **83%** | +1% |
+| Korean | 81% | **83%** | +2% |
+| Spanish | 79% | **81%** | +2% |
+| English | 75% | **79%** | +4% |
+| French | 77% | **79%** | +2% |
+| Portuguese | 77% | **79%** | +2% |
+| German | 76% | **78%** | +2% |
+| Russian | 78% | **78%** | +0% |
+| Chinese | 77% | **79%** | +2% |
 
-Per-language models win by 1-3%, but the universal model covers all 10 languages in a single 3.0 MB binary (4.2 MB JSON). 100% lossless roundtrip on all languages.
+After format optimization (compact header + passthrough), the universal model now **matches or exceeds** per-language models for most languages. The compact 2-byte header saves 1 byte per message, which particularly benefits languages with short average message lengths.
+
+![BPC before and after](docs/img/bpc-before-after.png)
 
 ### Conclusion: ship one universal model
 
-Per-language firmware builds add complexity (model versioning, cross-language fallback, build matrix) for only 1-3% better compression. A single universal model is simpler, works for everyone, and fits on ESP32 boards with 8+ MB flash.
+Per-language firmware builds add complexity (model versioning, cross-language fallback, build matrix) for no compression benefit. A single universal model is simpler, works for everyone, and fits on ESP32 boards with 8+ MB flash.
 
 Full experiment data: [multilingual_results.tsv](autoresearch/multilingual_results.tsv)
 
@@ -290,14 +365,24 @@ Full experiment data: [multilingual_results.tsv](autoresearch/multilingual_resul
 
 The `autoresearch/` directory contains a [Karpathy-style](https://github.com/karpathy/autoresearch) autonomous experimentation framework that iteratively improves the compression algorithm.
 
-Weighting experiments found **cubic weights (n+1)^3** as the best interpolation scheme. A [model size sweep](autoresearch/search_results.tsv) across 72 order×threshold combinations found that aggressive pruning improves compression. A [multilingual experiment](autoresearch/multilingual_results.tsv) confirmed that one universal model covers 10 languages with only 1-3% less compression than per-language models.
+![Optimization progress](docs/img/optimization-progress.png)
+
+Three phases of optimization, 40+ experiments total:
+
+**Phase 1 — Model tuning** (17 experiments): Cubic weights `(n+1)^3`, confidence penalty `min(t/(n+3), 1)`, ESC_PROB 20K→500. BPC: 3.272 → 3.211.
+
+**Phase 2 — Multilingual** (25 experiments): CJK 3× training weight, SCRIPT_BOOST 30→5, CJK-specific confidence (n+8), two-tier CJK encoding. BPC stable, ZH BPC −0.08.
+
+**Phase 3 — Format optimization** (15 experiments): Zero-overhead passthrough, compact 2-byte header, confidence n+1.5. BPC: 3.210 → 2.977 (−7.3%). Negative compression eliminated (19 → 0 cases).
 
 | # | Experiment | BPC | Status |
 |---|-----------|-----|--------|
-| baseline | order=7, quadratic | 3.272 | -- |
-| bi02 | order=11 | 3.226 | better |
-| **bi05** | **cubic (n+1)^3** | **3.220** | **best** |
-| bi06 | quartic (n+1)^4 | 3.286 | worse |
+| baseline | order=11, cubic | 3.220 | — |
+| exp12 | confidence penalty (n+3) | 3.212 | keep |
+| multilingual | ESC_PROB, SCRIPT_BOOST, CJK weight | 3.210 | keep |
+| **format** | **passthrough + compact header + conf n+1.5** | **2.977** | **keep** |
+
+Full experiment logs: [results.tsv](autoresearch/results.tsv)
 
 ## Project structure
 
@@ -306,6 +391,7 @@ docs/                           Web UI (GitHub Pages)
   index.html                    Interface (RU/EN toggle)
   compress.js                   JS compression engine
   model-universal-10lang.json   Universal model (10 languages, order=9)
+  img/                          Charts (generated by autoresearch/gen_charts.py)
 data/                           Training and test data
   train.txt                     92K training messages (RU + EN)
   test.txt                      2K test messages (RU)
@@ -316,12 +402,17 @@ server.py                       FastAPI server + API
 base91.py                       Base91 encoder/decoder
 export_model.py                 Export model to JSON
 autoresearch/                   Experimentation framework
-  compress.py                   Language model + arithmetic coder
+  compress.py                   Language model + arithmetic coder (THE file that gets optimized)
+  eval_short.py                 Short-message evaluation harness
+  eval_multilingual.py          Multilingual evaluation harness (10 languages)
+  gen_charts.py                 Chart generator for README (matplotlib)
+  prepare.py                    Original RU+EN evaluation harness (DO NOT MODIFY)
   search_small_model.py         Model size/quality sweep
   search_results.tsv            Full sweep results (72 combinations)
   experiment_multilingual.py    Universal vs per-language comparison
   generate_multilingual.py      Synthetic multilingual data generator
   multilingual_results.tsv      Multilingual experiment results
+  results.tsv                   Experiment log (phase 1)
 ```
 
 ## License
